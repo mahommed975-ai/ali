@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>GPS CAD Map</title>
+
+<link
+rel="stylesheet"
+href="https://unpkg.com/leaflet/dist/leaflet.css"
+/>
+
+<style>
+
+body{
+    margin:0;
+}
+
+#map{
+    width:100vw;
+    height:100vh;
+}
+
+.upload{
+    position:absolute;
+    z-index:1000;
+    top:10px;
+    left:10px;
+    background:white;
+    padding:10px;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="upload">
+
+<input type="file" id="fileInput">
+
+</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<script>
+
+const map = L.map('map').setView([30.51,47.78],18);
+
+L.tileLayer(
+'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+).addTo(map);
+
+const marker = L.marker([30.51,47.78]).addTo(map);
+
+navigator.geolocation.watchPosition(
+
+(pos)=>{
+
+    const lat = pos.coords.latitude;
+    const lon = pos.coords.longitude;
+
+    marker.setLatLng([lat,lon]);
+
+    map.setView([lat,lon]);
+
+},
+
+(err)=>{
+    alert("GPS Error");
+},
+
+{
+    enableHighAccuracy:true
+}
+
+);
+
+document.getElementById('fileInput')
+.addEventListener('change',(e)=>{
+
+    alert("تم تحميل ملف المخطط");
+
+});
+
+</script>
+
+</body>
+</html>
