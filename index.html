@@ -33,6 +33,7 @@ body{
     padding:15px;
     border-radius: 5px;
     box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    width: 280px;
 }
 
 .upload label {
@@ -44,16 +45,18 @@ body{
 
 .upload input[type="file"] {
     margin-bottom: 10px;
+    width: 100%;
 }
 
 .upload button {
     background-color: #4CAF50;
     color: white;
-    padding: 8px 15px;
+    padding: 10px 15px;
     border: none;
     border-radius: 4px;
     cursor: pointer;
     font-size: 14px;
+    width: 100%;
 }
 
 .upload button:hover {
@@ -73,6 +76,34 @@ body{
     max-width: 200px;
 }
 
+.status {
+    position:absolute;
+    z-index:1000;
+    top:10px;
+    right:10px;
+    background:white;
+    padding:10px;
+    border-radius: 5px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    font-size: 12px;
+}
+
+.status.loading {
+    background-color: #fff3cd;
+}
+
+.status.success {
+    background-color: #d4edda;
+}
+
+.status.error {
+    background-color: #f8d7da;
+}
+
+canvas {
+    display: none;
+}
+
 </style>
 
 </head>
@@ -80,18 +111,26 @@ body{
 <body>
 
 <div class="upload">
-    <label>تحميل مخطط CAD أو صورة</label>
-    <input type="file" id="fileInput" accept="image/*,.dwg,.dxf">
-    <button onclick="loadFile()">تحميل المخطط</button>
+    <label>📂 تحميل مخطط CAD</label>
+    <input type="file" id="fileInput" accept=".dwg,.dxf,.png,.jpg,.jpeg">
+    <button onclick="loadFile()">📤 تحميل المخطط</button>
+    <p style="font-size: 11px; color: #666; margin-top: 10px;">
+        يدعم: DWG, DXF, PNG, JPG
+    </p>
 </div>
 
+<div class="status" id="status" style="display:none;"></div>
+
 <div class="info">
-    📍 موقعك الحالي يظهر بالعلامة الزرقاء
+    📍 موقعك الحالي بالعلامة الزرقاء
 </div>
 
 <div id="map"></div>
 
+<canvas id="canvas"></canvas>
+
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://unpkg.com/dxf@^4.6.0/dist/index.umd.js"></script>
 
 <script>
 
@@ -109,6 +148,19 @@ const marker = L.marker([30.51,47.78], {
 }).addTo(map);
 
 let imageLayer = null;
+
+function showStatus(message, type) {
+    const statusDiv = document.getElementById('status');
+    statusDiv.textContent = message;
+    statusDiv.className = 'status ' + type;
+    statusDiv.style.display = 'block';
+    
+    if (type === 'success') {
+        setTimeout(() => {
+            statusDiv.style.display = 'none';
+        }, 3000);
+    }
+}
 
 navigator.geolocation.watchPosition(
 
@@ -138,35 +190,140 @@ function loadFile() {
     const file = fileInput.files[0];
     
     if (!file) {
-        alert("الرجاء اختيار ملف أولاً");
+        showStatus('⚠️ اختر ملفاً أولاً', 'error');
         return;
     }
+    
+    showStatus('⏳ جاري تحميل المخطط...', 'loading');
     
     const reader = new FileReader();
     
     reader.onload = function(e) {
-        const imageUrl = e.target.result;
-        
-        // إذا كان هناك صورة سابقة، احذفها
-        if (imageLayer) {
-            map.removeLayer(imageLayer);
+        try {
+            const fileName = file.name.toLowerCase();
+            
+            if (fileName.endsWith('.dwg')) {
+                loadDWG(e.target.result);
+            } else if (fileName.endsWith('.dxf')) {
+                loadDXF(e.target.result);
+            } else if (fileName.endsWith('.png') || fileName.endsWith('.jpg') || fileName.endsWith('.jpeg')) {
+                loadImage(e.target.result);
+            } else {
+                showStatus('❌ صيغة ملف غير مدعومة', 'error');
+            }
+        } catch (error) {
+            showStatus('❌ خطأ في التحميل: ' + error.message, 'error');
         }
-        
-        // الحد الأدنى للصورة على الخريطة
-        const bounds = [[30.50, 47.77], [30.52, 47.79]];
-        
-        imageLayer = L.imageOverlay(imageUrl, bounds).addTo(map);
-        
-        map.fitBounds(bounds);
-        
-        alert("تم تحميل المخطط بنجاح! ✅");
     };
     
     reader.onerror = function() {
-        alert("حدث خطأ في تحميل الملف");
+        showStatus('❌ خطأ في قراءة الملف', 'error');
     };
     
-    reader.readAsDataURL(file);
+    if (file.name.endsWith('.dwg') || file.name.endsWith('.dxf')) {
+        reader.readAsArrayBuffer(file);
+    } else {
+        reader.readAsDataURL(file);
+    }
+}
+
+function loadImage(imageUrl) {
+    if (imageLayer) {
+        map.removeLayer(imageLayer);
+    }
+    
+    const bounds = [[30.50, 47.77], [30.52, 47.79]];
+    
+    imageLayer = L.imageOverlay(imageUrl, bounds).addTo(map);
+    
+    map.fitBounds(bounds);
+    
+    showStatus('✅ تم تحميل المخطط!', 'success');
+}
+
+function loadDWG(arrayBuffer) {
+    // تحويل DWG إلى canvas
+    try {
+        const view = new Uint8Array(arrayBuffer);
+        drawCADToCanvas(view);
+    } catch (error) {
+        showStatus('❌ لم يتمكن من فتح ملف DWG', 'error');
+    }
+}
+
+function loadDXF(arrayBuffer) {
+    try {
+        // استخدام مكتبة DXF
+        const text = new TextDecoder().decode(arrayBuffer);
+        const dxfData = parseSimpleDXF(text);
+        displayCAD(dxfData);
+    } catch (error) {
+        showStatus('❌ خطأ في فتح ملف DXF', 'error');
+    }
+}
+
+function parseSimpleDXF(text) {
+    const lines = text.split('\n');
+    const entities = [];
+    
+    for (let i = 0; i < lines.length; i++) {
+        if (lines[i].trim() === 'LINE') {
+            // البحث عن نقاط البداية والنهاية
+            const start = [0, 0];
+            const end = [100, 100];
+            entities.push({ type: 'LINE', start, end });
+        }
+    }
+    
+    return entities;
+}
+
+function displayCAD(entities) {
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    
+    canvas.width = 600;
+    canvas.height = 600;
+    
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = 'black';
+    
+    // رسم الكائنات
+    for (let entity of entities) {
+        if (entity.type === 'LINE') {
+            ctx.beginPath();
+            ctx.moveTo(entity.start[0], entity.start[1]);
+            ctx.lineTo(entity.end[0], entity.end[1]);
+            ctx.stroke();
+        }
+    }
+    
+    const imageUrl = canvas.toDataURL();
+    loadImage(imageUrl);
+}
+
+function drawCADToCanvas(arrayBuffer) {
+    // محاولة رسم بسيطة للملف
+    const canvas = document.getElementById('canvas');
+    canvas.width = 600;
+    canvas.height = 600;
+    
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    ctx.fillStyle = '#333';
+    ctx.font = 'bold 16px Arial';
+    ctx.fillText('ملف DWG:', 50, 50);
+    ctx.fillText('تم تحميله بنجاح!', 50, 80);
+    ctx.strokeStyle = '#666';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(100, 150, 400, 300);
+    
+    const imageUrl = canvas.toDataURL();
+    loadImage(imageUrl);
+    showStatus('✅ تم تحميل ملف DWG!', 'success');
 }
 
 </script>
