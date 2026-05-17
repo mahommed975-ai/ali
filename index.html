@@ -16,6 +16,7 @@ href="https://unpkg.com/leaflet/dist/leaflet.css"
 
 body{
     margin:0;
+    font-family: Arial, sans-serif;
 }
 
 #map{
@@ -29,7 +30,47 @@ body{
     top:10px;
     left:10px;
     background:white;
+    padding:15px;
+    border-radius: 5px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+
+.upload label {
+    display: block;
+    margin-bottom: 10px;
+    font-weight: bold;
+    color: #333;
+}
+
+.upload input[type="file"] {
+    margin-bottom: 10px;
+}
+
+.upload button {
+    background-color: #4CAF50;
+    color: white;
+    padding: 8px 15px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.upload button:hover {
+    background-color: #45a049;
+}
+
+.info {
+    position:absolute;
+    z-index:1000;
+    bottom:10px;
+    left:10px;
+    background:white;
     padding:10px;
+    border-radius: 5px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    font-size: 12px;
+    max-width: 200px;
 }
 
 </style>
@@ -39,9 +80,13 @@ body{
 <body>
 
 <div class="upload">
+    <label>تحميل مخطط CAD أو صورة</label>
+    <input type="file" id="fileInput" accept="image/*,.dwg,.dxf">
+    <button onclick="loadFile()">تحميل المخطط</button>
+</div>
 
-<input type="file" id="fileInput">
-
+<div class="info">
+    📍 موقعك الحالي يظهر بالعلامة الزرقاء
 </div>
 
 <div id="map"></div>
@@ -53,10 +98,17 @@ body{
 const map = L.map('map').setView([30.51,47.78],18);
 
 L.tileLayer(
-'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+{
+    attribution: '© OpenStreetMap contributors'
+}
 ).addTo(map);
 
-const marker = L.marker([30.51,47.78]).addTo(map);
+const marker = L.marker([30.51,47.78], {
+    title: 'موقعك الحالي'
+}).addTo(map);
+
+let imageLayer = null;
 
 navigator.geolocation.watchPosition(
 
@@ -72,7 +124,7 @@ navigator.geolocation.watchPosition(
 },
 
 (err)=>{
-    alert("GPS Error");
+    console.log("GPS Error:", err.message);
 },
 
 {
@@ -81,12 +133,41 @@ navigator.geolocation.watchPosition(
 
 );
 
-document.getElementById('fileInput')
-.addEventListener('change',(e)=>{
-
-    alert("تم تحميل ملف المخطط");
-
-});
+function loadFile() {
+    const fileInput = document.getElementById('fileInput');
+    const file = fileInput.files[0];
+    
+    if (!file) {
+        alert("الرجاء اختيار ملف أولاً");
+        return;
+    }
+    
+    const reader = new FileReader();
+    
+    reader.onload = function(e) {
+        const imageUrl = e.target.result;
+        
+        // إذا كان هناك صورة سابقة، احذفها
+        if (imageLayer) {
+            map.removeLayer(imageLayer);
+        }
+        
+        // الحد الأدنى للصورة على الخريطة
+        const bounds = [[30.50, 47.77], [30.52, 47.79]];
+        
+        imageLayer = L.imageOverlay(imageUrl, bounds).addTo(map);
+        
+        map.fitBounds(bounds);
+        
+        alert("تم تحميل المخطط بنجاح! ✅");
+    };
+    
+    reader.onerror = function() {
+        alert("حدث خطأ في تحميل الملف");
+    };
+    
+    reader.readAsDataURL(file);
+}
 
 </script>
 
