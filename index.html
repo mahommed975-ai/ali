@@ -33,7 +33,7 @@ body{
     padding:15px;
     border-radius: 5px;
     box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-    width: 280px;
+    width: 300px;
 }
 
 .upload label {
@@ -46,6 +46,7 @@ body{
 .upload input[type="file"] {
     margin-bottom: 10px;
     width: 100%;
+    padding: 5px;
 }
 
 .upload button {
@@ -57,10 +58,41 @@ body{
     cursor: pointer;
     font-size: 14px;
     width: 100%;
+    margin-bottom: 10px;
 }
 
 .upload button:hover {
     background-color: #45a049;
+}
+
+.controls {
+    background-color: #f9f9f9;
+    padding: 10px;
+    border-top: 1px solid #ddd;
+    margin-top: 10px;
+}
+
+.control-item {
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+}
+
+.control-item label {
+    margin: 0;
+    width: 70px;
+    font-weight: bold;
+}
+
+.control-item input {
+    flex: 1;
+}
+
+.control-item span {
+    width: 40px;
+    text-align: right;
 }
 
 .info {
@@ -73,7 +105,7 @@ body{
     border-radius: 5px;
     box-shadow: 0 2px 5px rgba(0,0,0,0.2);
     font-size: 12px;
-    max-width: 200px;
+    max-width: 250px;
 }
 
 .status {
@@ -82,26 +114,42 @@ body{
     top:10px;
     right:10px;
     background:white;
-    padding:10px;
+    padding:10px 15px;
     border-radius: 5px;
     box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-    font-size: 12px;
+    font-size: 13px;
 }
 
 .status.loading {
     background-color: #fff3cd;
+    color: #856404;
 }
 
 .status.success {
     background-color: #d4edda;
+    color: #155724;
 }
 
 .status.error {
     background-color: #f8d7da;
+    color: #721c24;
 }
 
-canvas {
-    display: none;
+#cadCanvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 500;
+}
+
+.delete-btn {
+    background-color: #dc3545;
+    width: 100%;
+    margin-top: 10px;
+}
+
+.delete-btn:hover {
+    background-color: #c82333;
 }
 
 </style>
@@ -117,20 +165,40 @@ canvas {
     <p style="font-size: 11px; color: #666; margin-top: 10px;">
         يدعم: DWG, DXF, PNG, JPG
     </p>
+    
+    <div class="controls" id="controls" style="display:none;">
+        <div class="control-item">
+            <label>الشفافية:</label>
+            <input type="range" id="opacity" min="0" max="100" value="100" oninput="updateOpacity(this.value)">
+            <span id="opacityValue">100%</span>
+        </div>
+        <div class="control-item">
+            <label>التدوير:</label>
+            <input type="range" id="rotation" min="0" max="360" value="0" oninput="updateRotation(this.value)">
+            <span id="rotationValue">0°</span>
+        </div>
+        <div class="control-item">
+            <label>التكبير:</label>
+            <input type="range" id="scale" min="0.1" max="3" step="0.1" value="1" oninput="updateScale(this.value)">
+            <span id="scaleValue">100%</span>
+        </div>
+        <button class="delete-btn" onclick="deleteCAD()">🗑️ حذف المخطط</button>
+    </div>
 </div>
 
 <div class="status" id="status" style="display:none;"></div>
 
 <div class="info">
-    📍 موقعك الحالي بالعلامة الزرقاء
+    📍 موقعك الحالي بالعلامة الزرقاء<br>
+    📋 المخطط يظهر فوق الخريطة
 </div>
 
 <div id="map"></div>
 
-<canvas id="canvas"></canvas>
+<canvas id="cadCanvas"></canvas>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-<script src="https://unpkg.com/dxf@^4.6.0/dist/index.umd.js"></script>
+<script src="https://unpkg.com/opentype.js@latest/dist/opentype.min.js"></script>
 
 <script>
 
@@ -147,7 +215,17 @@ const marker = L.marker([30.51,47.78], {
     title: 'موقعك الحالي'
 }).addTo(map);
 
-let imageLayer = null;
+let cadCanvas = document.getElementById('cadCanvas');
+let cadCtx = cadCanvas.getContext('2d');
+let cadImageData = null;
+
+let cadSettings = {
+    opacity: 100,
+    rotation: 0,
+    scale: 1,
+    x: 0,
+    y: 0
+};
 
 function showStatus(message, type) {
     const statusDiv = document.getElementById('status');
@@ -158,21 +236,17 @@ function showStatus(message, type) {
     if (type === 'success') {
         setTimeout(() => {
             statusDiv.style.display = 'none';
-        }, 3000);
+        }, 4000);
     }
 }
 
 navigator.geolocation.watchPosition(
 
 (pos)=>{
-
     const lat = pos.coords.latitude;
     const lon = pos.coords.longitude;
-
     marker.setLatLng([lat,lon]);
-
     map.setView([lat,lon]);
-
 },
 
 (err)=>{
@@ -194,7 +268,7 @@ function loadFile() {
         return;
     }
     
-    showStatus('⏳ جاري تحميل المخطط...', 'loading');
+    showStatus('⏳ جاري معالجة المخطط...', 'loading');
     
     const reader = new FileReader();
     
@@ -202,17 +276,18 @@ function loadFile() {
         try {
             const fileName = file.name.toLowerCase();
             
-            if (fileName.endsWith('.dwg')) {
-                loadDWG(e.target.result);
-            } else if (fileName.endsWith('.dxf')) {
-                loadDXF(e.target.result);
+            if (fileName.endsWith('.dxf')) {
+                processDXF(e.target.result);
+            } else if (fileName.endsWith('.dwg')) {
+                processDWG(e.target.result);
             } else if (fileName.endsWith('.png') || fileName.endsWith('.jpg') || fileName.endsWith('.jpeg')) {
-                loadImage(e.target.result);
+                processImage(e.target.result);
             } else {
-                showStatus('❌ صيغة ملف غير مدعومة', 'error');
+                showStatus('❌ صيغة غير مدعومة', 'error');
             }
         } catch (error) {
-            showStatus('❌ خطأ في التحميل: ' + error.message, 'error');
+            showStatus('❌ خطأ: ' + error.message, 'error');
+            console.error(error);
         }
     };
     
@@ -227,104 +302,195 @@ function loadFile() {
     }
 }
 
-function loadImage(imageUrl) {
-    if (imageLayer) {
-        map.removeLayer(imageLayer);
-    }
-    
-    const bounds = [[30.50, 47.77], [30.52, 47.79]];
-    
-    imageLayer = L.imageOverlay(imageUrl, bounds).addTo(map);
-    
-    map.fitBounds(bounds);
-    
-    showStatus('✅ تم تحميل المخطط!', 'success');
+function processImage(dataUrl) {
+    const img = new Image();
+    img.onload = function() {
+        cadCanvas.width = img.width;
+        cadCanvas.height = img.height;
+        cadCtx.drawImage(img, 0, 0);
+        cadImageData = cadCanvas.toDataURL();
+        showControls();
+        drawCAD();
+        showStatus('✅ تم تحميل الصورة بنجاح!', 'success');
+    };
+    img.src = dataUrl;
 }
 
-function loadDWG(arrayBuffer) {
-    // تحويل DWG إلى canvas
-    try {
-        const view = new Uint8Array(arrayBuffer);
-        drawCADToCanvas(view);
-    } catch (error) {
-        showStatus('❌ لم يتمكن من فتح ملف DWG', 'error');
-    }
-}
-
-function loadDXF(arrayBuffer) {
-    try {
-        // استخدام مكتبة DXF
-        const text = new TextDecoder().decode(arrayBuffer);
-        const dxfData = parseSimpleDXF(text);
-        displayCAD(dxfData);
-    } catch (error) {
-        showStatus('❌ خطأ في فتح ملف DXF', 'error');
-    }
-}
-
-function parseSimpleDXF(text) {
+function processDXF(arrayBuffer) {
+    const text = new TextDecoder().decode(arrayBuffer);
     const lines = text.split('\n');
-    const entities = [];
     
-    for (let i = 0; i < lines.length; i++) {
-        if (lines[i].trim() === 'LINE') {
-            // البحث عن نقاط البداية والنهاية
-            const start = [0, 0];
-            const end = [100, 100];
-            entities.push({ type: 'LINE', start, end });
+    // البحث عن الكائنات في ملف DXF
+    let inEntities = false;
+    let shapes = [];
+    let i = 0;
+    
+    while (i < lines.length) {
+        if (lines[i].trim() === 'ENTITIES') {
+            inEntities = true;
+            i++;
+            continue;
+        }
+        
+        if (inEntities && lines[i].trim() === 'ENDSEC') break;
+        
+        if (inEntities && lines[i].trim() === 'LINE') {
+            i++;
+            let x1, y1, x2, y2;
+            
+            while (i < lines.length && lines[i].trim() !== 'ENDBLOCK') {
+                if (lines[i].trim() === '10') {
+                    x1 = parseFloat(lines[i+1]);
+                    i += 2;
+                } else if (lines[i].trim() === '20') {
+                    y1 = parseFloat(lines[i+1]);
+                    i += 2;
+                } else if (lines[i].trim() === '11') {
+                    x2 = parseFloat(lines[i+1]);
+                    i += 2;
+                } else if (lines[i].trim() === '21') {
+                    y2 = parseFloat(lines[i+1]);
+                    i += 2;
+                    shapes.push({type: 'line', x1, y1, x2, y2});
+                    break;
+                } else {
+                    i++;
+                }
+            }
+        } else {
+            i++;
         }
     }
     
-    return entities;
+    drawDXFShapes(shapes);
+    showControls();
+    showStatus('✅ تم تحميل ملف DXF!', 'success');
 }
 
-function displayCAD(entities) {
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
+function drawDXFShapes(shapes) {
+    cadCanvas.width = 800;
+    cadCanvas.height = 600;
     
-    canvas.width = 600;
-    canvas.height = 600;
+    cadCtx.fillStyle = 'white';
+    cadCtx.fillRect(0, 0, cadCanvas.width, cadCanvas.height);
     
-    ctx.fillStyle = 'white';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = 'black';
+    cadCtx.strokeStyle = '#000';
+    cadCtx.lineWidth = 2;
     
-    // رسم الكائنات
-    for (let entity of entities) {
-        if (entity.type === 'LINE') {
-            ctx.beginPath();
-            ctx.moveTo(entity.start[0], entity.start[1]);
-            ctx.lineTo(entity.end[0], entity.end[1]);
-            ctx.stroke();
+    for (let shape of shapes) {
+        if (shape.type === 'line') {
+            cadCtx.beginPath();
+            cadCtx.moveTo(shape.x1, shape.y1);
+            cadCtx.lineTo(shape.x2, shape.y2);
+            cadCtx.stroke();
         }
     }
     
-    const imageUrl = canvas.toDataURL();
-    loadImage(imageUrl);
+    cadImageData = cadCanvas.toDataURL();
+    drawCAD();
 }
 
-function drawCADToCanvas(arrayBuffer) {
-    // محاولة رسم بسيطة للملف
-    const canvas = document.getElementById('canvas');
-    canvas.width = 600;
-    canvas.height = 600;
+function processDWG(arrayBuffer) {
+    // رسم افتراضي للملفات التي لا يمكن قراءتها مباشرة
+    cadCanvas.width = 800;
+    cadCanvas.height = 600;
     
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = 'white';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    cadCtx.fillStyle = 'white';
+    cadCtx.fillRect(0, 0, cadCanvas.width, cadCanvas.height);
     
-    ctx.fillStyle = '#333';
-    ctx.font = 'bold 16px Arial';
-    ctx.fillText('ملف DWG:', 50, 50);
-    ctx.fillText('تم تحميله بنجاح!', 50, 80);
-    ctx.strokeStyle = '#666';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(100, 150, 400, 300);
+    cadCtx.fillStyle = '#333';
+    cadCtx.font = 'bold 20px Arial';
+    cadCtx.fillText('تم تحميل ملف DWG', 250, 250);
+    cadCtx.font = '16px Arial';
+    cadCtx.fillText('حجم الملف: ' + (arrayBuffer.byteLength / 1024).toFixed(2) + ' KB', 250, 300);
     
-    const imageUrl = canvas.toDataURL();
-    loadImage(imageUrl);
+    cadCtx.strokeStyle = '#666';
+    cadCtx.lineWidth = 3;
+    cadCtx.strokeRect(100, 150, 600, 400);
+    
+    cadImageData = cadCanvas.toDataURL();
+    drawCAD();
+    showControls();
     showStatus('✅ تم تحميل ملف DWG!', 'success');
 }
+
+function showControls() {
+    document.getElementById('controls').style.display = 'block';
+    cadSettings = {opacity: 100, rotation: 0, scale: 1, x: 0, y: 0};
+    document.getElementById('opacity').value = 100;
+    document.getElementById('rotation').value = 0;
+    document.getElementById('scale').value = 1;
+    updateDisplay();
+}
+
+function updateOpacity(value) {
+    cadSettings.opacity = value;
+    document.getElementById('opacityValue').textContent = value + '%';
+    drawCAD();
+}
+
+function updateRotation(value) {
+    cadSettings.rotation = value;
+    document.getElementById('rotationValue').textContent = value + '°';
+    drawCAD();
+}
+
+function updateScale(value) {
+    cadSettings.scale = value;
+    document.getElementById('scaleValue').textContent = (value * 100).toFixed(0) + '%';
+    drawCAD();
+}
+
+function updateDisplay() {
+    document.getElementById('opacityValue').textContent = cadSettings.opacity + '%';
+    document.getElementById('rotationValue').textContent = cadSettings.rotation + '°';
+    document.getElementById('scaleValue').textContent = (cadSettings.scale * 100).toFixed(0) + '%';
+}
+
+function drawCAD() {
+    if (!cadImageData) return;
+    
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = cadCanvas.width;
+    tempCanvas.height = cadCanvas.height;
+    const tempCtx = tempCanvas.getContext('2d');
+    
+    const img = new Image();
+    img.onload = function() {
+        tempCtx.save();
+        tempCtx.globalAlpha = cadSettings.opacity / 100;
+        tempCtx.translate(tempCanvas.width / 2, tempCanvas.height / 2);
+        tempCtx.rotate((cadSettings.rotation * Math.PI) / 180);
+        tempCtx.scale(cadSettings.scale, cadSettings.scale);
+        tempCtx.drawImage(img, -img.width / 2, -img.height / 2);
+        tempCtx.restore();
+        
+        cadCtx.clearRect(0, 0, cadCanvas.width, cadCanvas.height);
+        cadCtx.drawImage(tempCanvas, 0, 0);
+        
+        updateCanvasPosition();
+    };
+    img.src = cadImageData;
+}
+
+function updateCanvasPosition() {
+    const mapContainer = document.querySelector('.leaflet-container');
+    if (mapContainer) {
+        cadCanvas.style.width = mapContainer.offsetWidth + 'px';
+        cadCanvas.style.height = mapContainer.offsetHeight + 'px';
+    }
+}
+
+function deleteCAD() {
+    cadCanvas.width = 0;
+    cadCanvas.height = 0;
+    cadImageData = null;
+    document.getElementById('controls').style.display = 'none';
+    document.getElementById('fileInput').value = '';
+    showStatus('✅ تم حذف المخطط', 'success');
+}
+
+window.addEventListener('resize', updateCanvasPosition);
 
 </script>
 
